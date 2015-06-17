@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
@@ -10,9 +11,22 @@ namespace Xbim.TestApp
     {
         static void Main(string[] args)
         {
-            var bimProcessor = new XbimTester();
+            string model = null;
+            if(args.Length>0)
+            {
+                model = args[0];
+            }
+            var bimProcessor = new XbimTester(model);
 
-            bimProcessor.ProcessModel();
+
+            if (!File.Exists(bimProcessor.XbimModel))
+            {
+                bimProcessor.ProcessModel();
+            }
+            else
+            {
+                bimProcessor.ProcessExisting();
+            }
         }
     }
 }
