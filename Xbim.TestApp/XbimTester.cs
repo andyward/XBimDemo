@@ -11,6 +11,8 @@ using XbimGeometry.Interfaces;
 
 using Xbim.Ifc2x3.Extensions;
 using Xbim.Ifc2x3.SharedBldgElements;
+using Xbim.XbimExtensions.Interfaces;
+using System.Threading.Tasks;
 
 namespace Xbim.TestApp
 {
@@ -51,9 +53,7 @@ namespace Xbim.TestApp
                 ExtractData(model);
 
             }
-            Console.WriteLine("Enter to continue");
-            Console.ReadLine();
-            
+              
         }
 
         /// <summary>
@@ -69,9 +69,7 @@ namespace Xbim.TestApp
                 ExtractData(model);
 
             }
-            Console.WriteLine("Enter to continue");
-            Console.ReadLine();
-            
+                        
         }
 
 
@@ -84,27 +82,32 @@ namespace Xbim.TestApp
             Console.WriteLine("Extracting data from semantic and geometric model");
 
             // Just extract Products - i.e everything with Geometry or spatial context
-            foreach(var product in model.Instances.OfType<IfcProduct>()
+            
+            //foreach(var product in model.Instances.OfType<IfcProduct>()
+
+            Parallel.ForEach(model.Instances.OfType<IfcProduct>()    
                 .Where(p => !p.GetType().IsSubclassOf(typeof(IfcFeatureElementSubtraction))) // Ignore Openings  
                 //.Where(p=>p.EntityLabel == 152)
                 //.Where(p => p.GetType().IsSubclassOf(typeof(IfcBuildingElement)))
-                .OrderBy(o=>o.GetType().Name)
-                )
-            {
+                .OrderBy(o => o.GetType().Name),
+                product =>
+                {
 
-                System.Console.WriteLine("#{0}: [{1}] {2} [{3}]",
-                    product.EntityLabel,
-                    product.GetType().Name,
-                    product.Name,
-                    product.GlobalId
-                    //product.Representation
-                    );
+                    System.Console.WriteLine("#{0}: [{1}] {2} [{3}]",
+                        product.EntityLabel,
+                        product.GetType().Name,
+                        product.Name,
+                        product.GlobalId
+                        //product.Representation
+                        );
 
-                // TODO: show how to get Property sets etc.
+                    // TODO: show how to get Property sets etc.
 
-                GetGeometryData(model, product);
+                    GetGeometryData(model, product);
 
-            }
+                });
+
+            ShowSemanticSummary(model);
         }
 
         private void GetGeometryData(XbimModel model, IfcProduct product)
@@ -159,6 +162,33 @@ namespace Xbim.TestApp
             }
         }
 
+
+        private void ShowSemanticSummary(IO.XbimModel model)
+        {
+            var summary = model.Instances.OfType<IPersistIfcEntity>()
+                .GroupBy(i => i.GetType().Name)
+                .Select(ig =>
+                    new
+                    {
+                        Type = ig.Key,
+                        Count = ig.Count()
+                    }
+                )
+                .OrderBy(o=>o.Type);
+
+            Console.WriteLine("{0,-40}   {1,-6}",
+                "Type",
+                "Qty");
+            Console.WriteLine("{0,-40}   {1,6}", 
+                new string('=', 40), 
+                new string('=', 6));
+
+            foreach(var row in summary)
+            {
+                Console.WriteLine("{0,-40} : {1,6}", row.Type, row.Count);
+            }
+            
+        }
  
         /// <summary>
         /// Generates the Geometry from the semantic model
