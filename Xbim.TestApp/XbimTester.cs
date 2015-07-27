@@ -13,6 +13,8 @@ using Xbim.Ifc2x3.Extensions;
 using Xbim.Ifc2x3.SharedBldgElements;
 using Xbim.XbimExtensions.Interfaces;
 using System.Threading.Tasks;
+using System.Collections.Generic;
+using Humanizer;
 
 namespace Xbim.TestApp
 {
@@ -52,6 +54,8 @@ namespace Xbim.TestApp
 
                 ExtractData(model);
 
+                
+
             }
               
         }
@@ -79,13 +83,21 @@ namespace Xbim.TestApp
         /// <param name="model"></param>
         private void ExtractData(XbimModel model)
         {
+            DumpContents(model);
+
+            ShowSemanticSummary(model);
+            ShowGeometrySummary(model);
+        }
+
+        private void DumpContents(XbimModel model)
+        {
             Console.WriteLine("Extracting data from semantic and geometric model");
 
             // Just extract Products - i.e everything with Geometry or spatial context
-            
+
             //foreach(var product in model.Instances.OfType<IfcProduct>()
 
-            Parallel.ForEach(model.Instances.OfType<IfcProduct>()    
+            Parallel.ForEach(model.Instances.OfType<IfcProduct>()
                 .Where(p => !p.GetType().IsSubclassOf(typeof(IfcFeatureElementSubtraction))) // Ignore Openings  
                 //.Where(p=>p.EntityLabel == 152)
                 //.Where(p => p.GetType().IsSubclassOf(typeof(IfcBuildingElement)))
@@ -106,8 +118,6 @@ namespace Xbim.TestApp
                     GetGeometryData(model, product);
 
                 });
-
-            ShowSemanticSummary(model);
         }
 
         private void GetGeometryData(XbimModel model, IfcProduct product)
@@ -163,33 +173,138 @@ namespace Xbim.TestApp
         }
 
 
-        private void ShowSemanticSummary(IO.XbimModel model)
+        private void ShowSemanticSummary(XbimModel model)
         {
             var summary = model.Instances.OfType<IPersistIfcEntity>()
-                .GroupBy(i => i.GetType().Name)
+                .GroupBy(i => i.GetType())
                 .Select(ig =>
                     new
                     {
-                        Type = ig.Key,
+                        Type = ig.Key.Name,
+                        Classification = ig.Key.GetDomain(),
                         Count = ig.Count()
                     }
                 )
-                .OrderBy(o=>o.Type);
+                .OrderBy(o=>o.Classification)
+                .ThenBy(n=>n.Type);
 
-            Console.WriteLine("{0,-40}   {1,-6}",
+            Console.WriteLine("{0,-34} {1,-35} {2,-6}",
+                "Domain",
                 "Type",
                 "Qty");
-            Console.WriteLine("{0,-40}   {1,6}", 
-                new string('=', 40), 
+            Console.WriteLine("{0,-34} {1,-35} {2,6}",
+                new string('=', 34),
+                new string('=', 35), 
                 new string('=', 6));
 
             foreach(var row in summary)
             {
-                Console.WriteLine("{0,-40} : {1,6}", row.Type, row.Count);
+                Console.WriteLine("{0,-34} {1,-35} {2,6}", row.Classification, row.Type, row.Count);
             }
             
         }
- 
+
+        
+
+        private void ShowGeometrySummary(XbimModel model)
+        {
+            var context = new Xbim3DModelContext(model);
+            
+            Console.WriteLine();
+            Console.WriteLine("Styles");
+            foreach(var styles in context.SurfaceStyles())
+            {
+                Console.WriteLine("{0,-6} {1,-30} {2,-6}",
+                    styles.DefinedObjectId,
+                    styles.ColourMap.First(),
+                    styles.IsTransparent);
+            }
+            var largest = context.GetLargestRegion();
+            
+            Console.WriteLine();
+            Console.WriteLine("Regions");
+            foreach(var region in context.GetRegions())
+            {
+                Console.WriteLine("{0,-20} {1,6} {2}",
+                    region.Name,
+                    region.Population,
+                    (region == largest));
+
+            }
+
+
+
+            Console.WriteLine("{0,-8}, {1,-8}, {2,6} {3,8}",
+                "Ifc Label",
+                "Label",
+                "Ref Count",
+                "Bytes");
+
+            var geometries = GetGeom(model)
+                .OrderByDescending(o => o.Cost)
+                .Distinct()
+                .Take(10);
+
+            var items = from inst in context.ShapeInstances()
+                        join prod in model.Instances.OfType<IfcProduct>()
+                            on inst.IfcProductLabel equals prod.EntityLabel
+                      select new 
+                      { 
+                          Instance = inst, 
+                          Geometry = context.ShapeGeometry(inst.InstanceLabel),  
+                          Product = prod
+                      };
+
+            var expensiveProducts = items
+                .OrderByDescending(o => (o.Geometry.IsValid ? o.Geometry.Cost : 0))
+                .Take(20);
+
+            foreach (var geometry in geometries)
+            {
+                Console.WriteLine("{0, -8}, {1,-8}, {2,6} {3,8}",
+                    geometry.IfcShapeLabel,
+                    geometry.ShapeLabel,
+                    geometry.ReferenceCount,
+                    geometry.Cost);
+            }
+
+            Console.WriteLine();
+            Console.WriteLine("Top 20 expensive items");
+            foreach (var item in expensiveProducts)
+            {
+                Console.WriteLine("{0,-6} {1,-40} {2,-20} {3,6}",
+                    item.Product.EntityLabel,
+                    item.Product.Name.ToString().Truncate(40),
+                    item.Product.GetType().Name,
+                    item.Geometry.Cost
+                    );
+            }
+        }
+
+        // Private fix for bug in Geom.Shape
+        private IEnumerable<XbimShapeGeometry> GetGeom(XbimModel model)
+        {
+            using (var shapeGeometryTable = model.GetShapeGeometryTable())
+            {
+
+                using (shapeGeometryTable.BeginReadOnlyTransaction())
+                {
+                    IXbimShapeGeometryData shapeGeometry = new XbimShapeGeometry();
+                    if (shapeGeometryTable.TryMoveFirstShapeGeometry(ref shapeGeometry))
+                    {
+                        do
+                        {
+                            yield return (XbimShapeGeometry)shapeGeometry;
+                            shapeGeometry = new XbimShapeGeometry();
+                        } while (shapeGeometryTable.TryMoveNextShapeGeometry(ref shapeGeometry));
+                    }
+
+                }
+
+            }
+
+        }
+
         /// <summary>
         /// Generates the Geometry from the semantic model
         /// </summary>

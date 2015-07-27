@@ -27,6 +27,9 @@ namespace Xbim.TestApp
             {
                 bimProcessor.ProcessExisting();
             }
+
+            Console.WriteLine("Enter to continue");
+            Console.ReadLine();
         }
     }
 }
